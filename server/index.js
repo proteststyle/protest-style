@@ -80,14 +80,13 @@ async function getRates() {
 // ---------- каталог для витрины ----------
 function publicProduct(p) {
   const { source, ...rest } = p;
-  return Object.assign(rest, { post: source && source.link || '' });
+  return Object.assign(rest, { photos: (p.photos || []).map(storage.localizeUrl), post: source && source.link || '' });
 }
 async function catalog(admin) {
   const { db } = await store.read();
-  return {
-    products: db.products.filter(p => admin || !p.hidden).map(publicProduct),
-    settings: db.settings || {},
-  };
+  const settings = Object.assign({}, db.settings || {});
+  if (settings.hero) settings.hero = storage.localizeUrl(settings.hero);
+  return { products: db.products.filter(p => admin || !p.hidden).map(publicProduct), settings };
 }
 
 // ---------- загрузка файлов частями ----------
@@ -323,7 +322,21 @@ async function route(req, res) {
     const urls = [`<url><loc>${SITE}/</loc></url>`, ...list.map(x => `<url><loc>${SITE}/p/${x.id}</loc><lastmod>${(x.updated || '').slice(0, 10)}</lastmod></url>`)];
     return send(res, 200, `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join('')}</urlset>`, { 'content-type': 'application/xml; charset=utf-8' });
   }
-  if (p.startsWith('/media/') && !storage.useS3()) { const f = storage.localMediaPath(decodeURIComponent(p.slice(7))); return f ? serveFile(req, res, f, 'public, max-age=31536000') : fail(res, 404, 'nf'); }
+  if (p.startsWith('/media/')) {
+    const key = decodeURIComponent(p.slice(7));
+    if (!/^[\w\-./]+$/.test(key) || key.includes('..')) return fail(res, 404, 'nf');
+    if (!storage.useS3()) { const f = storage.localMediaPath(key); return f ? serveFile(req, res, f, 'public, max-age=31536000') : fail(res, 404, 'nf'); }
+    const r = await storage.getMedia(key, req.headers.range);
+    if (r.status !== 200 && r.status !== 206) { r.body && r.body.cancel().catch(() => {}); return send(res, r.status === 403 ? 404 : r.status, 'Not found', { 'content-type': 'text/plain' }); }
+    const h = { 'content-type': r.headers.get('content-type') || TYPES[path.extname(key)] || 'application/octet-stream', 'cache-control': 'public, max-age=31536000, immutable', 'accept-ranges': 'bytes' };
+    ['content-length', 'content-range', 'etag', 'last-modified'].forEach(n => { const v = r.headers.get(n); if (v) h[n] = v; });
+    res.writeHead(r.status, h);
+    if (M === 'HEAD' || !r.body) return res.end();
+    const stream = require('stream').Readable.fromWeb(r.body);
+    stream.on('error', () => res.destroy());
+    req.on('close', () => stream.destroy());
+    return stream.pipe(res);
+  }
   const f = path.resolve(PUBLIC, '.' + decodeURIComponent(p));
   if (!f.startsWith(PUBLIC + path.sep)) return fail(res, 404, 'nf');
   return serveFile(req, res, f);

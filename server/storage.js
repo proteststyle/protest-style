@@ -75,9 +75,21 @@ async function putMedia(key, buf, type) {
   if (!r.ok) throw new Error('s3 put ' + r.status + ' ' + (await r.text()).slice(0, 300));
   return mediaUrl(key);
 }
-function mediaUrl(key) {
-  if (!useS3()) return '/media/' + key;
-  return (S3.publicBase || `${S3.endpoint}/${S3.mediaBucket}`) + '/' + encPath(key);
+// Фото и видео отдаются через сам сайт (/media/…): так они грузятся быстро из любой страны,
+// а сервер забирает их из хранилища по внутренней сети
+function mediaUrl(key) { return '/media/' + key; }
+const directBase = () => (S3.publicBase || `${S3.endpoint}/${S3.mediaBucket}`) + '/';
+// старые ссылки вида https://s3…/bucket/key → /media/key
+function localizeUrl(u) {
+  const s = String(u || '');
+  if (!useS3()) return s;
+  return s.split(directBase()).join('/media/');
+}
+// Поток файла из хранилища для /media/… (с поддержкой Range для видео)
+async function getMedia(key, range) {
+  const headers = range ? { range } : {};
+  const s = sign('GET', S3.mediaBucket, key, { headers });
+  return fetch(s.url, { headers: s.headers, signal: AbortSignal.timeout(120000) });
 }
 function localMediaPath(key) {
   const f = path.resolve(LOCAL_DIR, 'media', key);
@@ -115,4 +127,4 @@ async function check() {
   return { mode: 's3', ok: !!back };
 }
 
-module.exports = { putMedia, mediaUrl, getData, putData, check, useS3, localMediaPath, _sign: sign, _S3: S3 };
+module.exports = { putMedia, mediaUrl, localizeUrl, getMedia, getData, putData, check, useS3, localMediaPath, _sign: sign, _S3: S3 };
