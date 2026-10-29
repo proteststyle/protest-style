@@ -51,7 +51,7 @@ async function s3req(method, bucket, key, opts = {}) {
   let last;
   for (let a = 0; a < 3; a++) {
     try {
-      const r = await fetch(s.url, { method, headers: s.headers, body: opts.body && opts.body.length ? opts.body : undefined });
+      const r = await fetch(s.url, { method, headers: s.headers, body: opts.body && opts.body.length ? opts.body : undefined, signal: AbortSignal.timeout(60000) });
       if (r.status >= 500) { last = new Error('s3 ' + r.status + ' ' + (await r.text()).slice(0, 200)); continue; }
       return r;
     } catch (e) { last = e; }

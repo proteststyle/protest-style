@@ -213,7 +213,11 @@ async function route(req, res) {
   const u = new URL(req.url, 'http://x');
   const p = u.pathname, M = req.method;
 
-  if (p === '/api/health') return ok(res, { storage: await storage.check().catch(e => ({ error: e.message })), bot: tg.enabled(), ai: ai.aiReady() });
+  if (p === '/api/health') {
+    // быстрый ответ для проверки платформы; полная проверка хранилища: /api/health?full=1
+    if (!u.searchParams.has('full')) return ok(res, { storage: storage.useS3() ? 's3' : 'local', bot: tg.enabled(), ai: ai.aiReady() });
+    return ok(res, { storage: await storage.check().catch(e => ({ error: e.message })), bot: tg.enabled(), ai: ai.aiReady() });
+  }
 
   // Telegram
   if (M === 'POST' && p === tg.hookPath()) {
